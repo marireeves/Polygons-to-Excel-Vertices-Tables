@@ -1,0 +1,105 @@
+---
+title: "GenerateVerticesTables"
+author: "Mari K Reeves"
+date: "2022-12-07"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+https://stackoverflow.com/questions/58438622/export-a-polygon-shapefile-as-a-list-of-xy-vertex-pairs 
+
+```{r global_options, echo=TRUE, message=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs/',
+                     echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+
+```{r Read in Packages, include=FALSE}
+pckg <- c("tidyverse","RColorBrewer", "ggplot2","lattice", "knitr", "markdown", "rmarkdown", "sf", "openxlsx" )
+for(i in 1:length(pckg)){
+  if ((!pckg[i] %in% installed.packages())==T) {
+    install.packages(pckg[i], repos="http://cran.us.r-project.org",
+                     dependencies = T)
+    print(pckg[i])
+    do.call("library", list(pckg[i]))
+  }else{
+    print(pckg[i])
+    do.call("library", list(pckg[i]))
+  }
+}
+```
+
+
+```{r Clean Workspace and Set Directories, include=FALSE}
+rm(list = ls()) #'remove all past worksheet variables
+
+set.seed(333)
+basedir<-"C:/Users/marireeves/Documents/Iiwi/GenerateVertices/"
+sysCRS<-"+proj=utm +zone=4 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"
+#read in Iiwi final CH Units
+ch<-st_read(dsn = basedir ,layer = "state_coast")
+st_crs(ch)#check current CRS it's in NAD83 zone4 UTM
+
+sf_proj_info()
+#change to lat long and WGS84 EPSG:4326 https://epsg.io/4326 
+newch<-st_transform(ch, "EPSG:4326")
+#export these to a csv file, so that I can manipulate in Excel. She wants a separate sheet per unit anyway. 
+latlong<-as.data.frame(newch)
+#write.csv(latlong, file = "iiwi_raw_latlong_EPSG4326.csv")#this has a very messy outcome, so followed this example instead: https://stackoverflow.com/questions/58438622/export-a-polygon-shapefile-as-a-list-of-xy-vertex-pairs
+```
+
+```{r, check reprojected units and export lat long into a cleaner table}
+plot(newch)#that is kind of a weird view..asking Susan what CRS to use
+#extract coordinates from sf
+st_crs(newch)#double check CRS
+#extract the coordinates from the shapefile
+coord    <- st_coordinates(newch) %>% 
+  as.data.frame() %>%
+  group_by( L2 ) %>% 
+  mutate(L3 = row_number() )
+
+#extract data from sf
+polygons <- st_drop_geometry(newch) %>% 
+  mutate( Island = as.character( Label ) ) %>%
+  rownames_to_column( var = "id" ) %>% 
+  mutate( id = as.numeric(id) ) %>%
+  #join coordinates
+  left_join( coord, by = c("id" = "L2") )
+
+```
+
+
+```{r, export lat long into a series of excel files by unit name}
+#https://readxl.tidyverse.org/
+
+#drop unwanted fields from polygons
+names(polygons)
+ch4export<-polygons[,c("Island","X","Y")]
+#make a list of units
+units<-unique(ch4export$Island)
+for (unit in units){
+  poly<-ch4export[ch4export$Island==unit,]
+  filename<-paste0(basedir, as.character(unit), ".xlsx")
+  line1<-"Critical Habitat"
+  line2<-paste0(unit, " Unit")
+  #figure out how to make name italic
+  line3<-"Data layers defining map units were created using the World Geodetic System 1984 (EPSG:4326)"
+  header = paste(c( line1, line2, line3), sep = "\n")
+  names(poly)<-c("Unit Name",	"Longitude",	"Latitude")#reassign the column names
+  #https://cran.r-project.org/web/packages/openxlsx/vignettes/Introduction.html documentation for how to write a header and format xlsx table
+  wb <- createWorkbook()#create an empty workbook
+  modifyBaseFont(wb, fontSize = 12, fontName = "Arial")
+  addWorksheet(wb, sheetName = unit, gridLines = T)
+  setColWidths(wb, sheet = 1, cols = 1:5, widths = 20)
+  #format row 4 as plain and bold text
+  #https://www.rdocumentation.org/packages/openxlsx/versions/4.2.5.1/topics/createStyle
+  hs<-createStyle(fontSize = 12, fontName = "Arial", textDecoration = "bold")
+  writeData(wb, sheet = 1, x = header, startCol = 1, startRow = 1)
+  writeDataTable(wb, sheet = 1, poly, startCol = 1, startRow = 4,headerStyle = hs ) 
+  #export to excel file
+  saveWorkbook(wb, filename, overwrite = TRUE)
+}
+```
+
